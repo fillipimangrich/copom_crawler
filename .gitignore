@@ -1,0 +1,17 @@
+# Binaries
+copom-crawler
+
+# Dependencies
+chromedriver-linux64/
+
+# Debug artifacts
+*.png
+*.html
+debug_*
+
+# OS specific
+.DS_Store
+
+# Editor specific
+.vscode/
+.idea/
