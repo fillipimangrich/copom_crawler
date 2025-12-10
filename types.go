@@ -20,6 +20,8 @@ type GeminiPrediction struct {
 }
 
 type EnrichedParagraph struct {
+	GlobalID      int              `json:"global_id"`
+	ParagraphID   int              `json:"paragraph_id"` // Sequencial dentro da reunião
 	MeetingNumber int              `json:"meeting_number"`
 	MeetingDate   string           `json:"meeting_date"`
 	DollarValue   float64          `json:"dollar_value"`

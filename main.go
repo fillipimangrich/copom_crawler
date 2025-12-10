@@ -107,13 +107,61 @@ func runEnricher() {
 		log.Printf("Erro ao carregar %s (será criado novo): %v", enrichedFilename, err)
 	}
 
-	enrichedMap := make(map[int]bool)
+	// Backfill de IDs se necessário (para compatibilidade com dados antigos)
+	needsSave := false
+	maxGlobalID := 0
+	paraCount := make(map[int]int)
+
+	// Primeiro passo: identificar IDs existentes para não sobrescrever incorretamente
 	for _, item := range enrichedData {
-		enrichedMap[item.MeetingNumber] = true
+		if item.GlobalID > maxGlobalID {
+			maxGlobalID = item.GlobalID
+		}
+		if item.ParagraphID > paraCount[item.MeetingNumber] {
+			paraCount[item.MeetingNumber] = item.ParagraphID
+		}
+	}
+
+	// Segundo passo: preencher zeros
+	for i := range enrichedData {
+		if enrichedData[i].GlobalID == 0 {
+			maxGlobalID++
+			enrichedData[i].GlobalID = maxGlobalID
+			needsSave = true
+		}
+		if enrichedData[i].ParagraphID == 0 {
+			paraCount[enrichedData[i].MeetingNumber]++
+			enrichedData[i].ParagraphID = paraCount[enrichedData[i].MeetingNumber]
+			needsSave = true
+		}
+	}
+
+	if needsSave {
+		log.Println("Atualizando dataset com IDs sequenciais (Backfill)...")
+		if err := SaveEnrichedData(enrichedFilename, enrichedData); err != nil {
+			log.Printf("Erro ao salvar backfill: %v", err)
+		}
+	}
+
+	// Mapa para rastrear parágrafos já processados: MeetingNumber -> ParagraphID -> bool
+	processedMap := make(map[int]map[int]bool)
+	nextGlobalID := 1
+
+	// Inicializar mapa e encontrar o próximo GlobalID
+	for _, item := range enrichedData {
+		if _, ok := processedMap[item.MeetingNumber]; !ok {
+			processedMap[item.MeetingNumber] = make(map[int]bool)
+		}
+		processedMap[item.MeetingNumber][item.ParagraphID] = true
+
+		if item.GlobalID >= nextGlobalID {
+			nextGlobalID = item.GlobalID + 1
+		}
 	}
 
 	log.Printf("Total de atas brutas: %d", len(rawAtas))
-	log.Printf("Total de atas já enriquecidas: %d", len(enrichedData))
+	log.Printf("Total de parágrafos já enriquecidos: %d", len(enrichedData))
+	log.Printf("Próximo Global ID: %d", nextGlobalID)
 
 	// Configuração de limite (opcional)
 	maxMeetingsStr := os.Getenv("MAX_MEETINGS")
@@ -126,12 +174,18 @@ func runEnricher() {
 
 	count := 0
 	for _, ata := range rawAtas {
-		if enrichedMap[ata.NumeroReuniao] {
-			continue
-		}
+		// Não pulamos a ata inteira aqui baseada no enrichedMap antigo, pois precisamos checar parágrafo a parágrafo.
+		// Mas se já processamos TODOS os parágrafos dessa ata, poderíamos pular.
+		// Por simplificação, vamos gerar os parágrafos e checar um a um.
 
 		if maxMeetings > 0 && count >= maxMeetings {
-			log.Printf("Atingido limite de processamento (%d). Parando.", maxMeetings)
+			log.Printf("Atingido limite de processamento de atas (%d). Parando.", maxMeetings)
+			break
+		}
+
+		// Limite de segurança total de parágrafos (ex: 1000)
+		if len(enrichedData) >= 1000 {
+			log.Printf("Atingido limite total de 1000 parágrafos enriquecidos. Parando.")
 			break
 		}
 
@@ -139,15 +193,13 @@ func runEnricher() {
 			continue
 		}
 
-		log.Printf("Enriquecendo Ata %d...", ata.NumeroReuniao)
+		log.Printf("Analisando Ata %d...", ata.NumeroReuniao)
 
 		var textContent string
 		if ata.FalhaNoParse {
 			// Remover tags HTML simples para extrair texto
-			// Regex simples para remover tags
 			re := regexp.MustCompile(`<[^>]*>`)
 			textContent = re.ReplaceAllString(ata.Conteudo, "\n")
-			// Decodificar entidades HTML básicas se necessário (simplificado aqui)
 			textContent = strings.ReplaceAll(textContent, "&nbsp;", " ")
 			textContent = strings.ReplaceAll(textContent, "&amp;", "&")
 		} else {
@@ -164,41 +216,55 @@ func runEnricher() {
 			if line == "" {
 				continue
 			}
-
-			// Se o buffer não estiver vazio, adicionar espaço antes da nova linha
 			if currentBuffer.Len() > 0 {
 				currentBuffer.WriteString(" ")
 			}
 			currentBuffer.WriteString(line)
-
-			// Se o parágrafo acumulado for grande o suficiente, considerar um parágrafo
-			// Aumentei para 200 chars para evitar frases soltas, mas pode ajustar
 			if currentBuffer.Len() >= 200 {
 				paragraphs = append(paragraphs, currentBuffer.String())
 				currentBuffer.Reset()
 			}
 		}
-		// Adicionar o restante do buffer se houver algo
 		if currentBuffer.Len() > 0 {
 			paragraphs = append(paragraphs, currentBuffer.String())
 		}
 
 		processedParagraphs := 0
-		for _, p := range paragraphs {
-			// Verificação extra de tamanho mínimo (embora a agregação já ajude)
+		newlyEnrichedCount := 0
+		totalParagraphs := len(paragraphs)
+
+		// Inicializar mapa para esta ata se não existir
+		if _, ok := processedMap[ata.NumeroReuniao]; !ok {
+			processedMap[ata.NumeroReuniao] = make(map[int]bool)
+		}
+
+		for i, p := range paragraphs {
+			paragraphID := i + 1 // ID sequencial base 1
+
+			// Verificação extra de tamanho mínimo
 			if len(p) < 50 {
 				continue
+			}
+
+			// Checar se já foi processado
+			if processedMap[ata.NumeroReuniao][paragraphID] {
+				continue
+			}
+
+			if (i+1)%5 == 0 || i == 0 {
+				log.Printf("  Processando parágrafo %d/%d da Ata %d...", paragraphID, totalParagraphs, ata.NumeroReuniao)
 			}
 
 			prediction, err := callGeminiAPI(p, ata.ValorDolar, ata.ValorIPCA)
 			if err != nil {
 				log.Printf("Erro ao chamar Gemini para reunião %d: %v", ata.NumeroReuniao, err)
-				// Rate limit backoff
 				time.Sleep(5 * time.Second)
 				continue
 			}
 
 			enriched := EnrichedParagraph{
+				GlobalID:      nextGlobalID,
+				ParagraphID:   paragraphID,
 				MeetingNumber: ata.NumeroReuniao,
 				MeetingDate:   ata.DataReuniao,
 				DollarValue:   ata.ValorDolar,
@@ -207,23 +273,24 @@ func runEnricher() {
 				Prediction:    prediction,
 			}
 			enrichedData = append(enrichedData, enriched)
+			processedMap[ata.NumeroReuniao][paragraphID] = true
+			nextGlobalID++
 			processedParagraphs++
+			newlyEnrichedCount++
 
 			// Rate limit
 			time.Sleep(2 * time.Second)
 		}
 
-		if processedParagraphs > 0 {
-			// Salvar progresso após cada ata processada
+		if newlyEnrichedCount > 0 {
 			if err := SaveEnrichedData(enrichedFilename, enrichedData); err != nil {
 				log.Printf("Erro ao salvar dados enriquecidos: %v", err)
 			} else {
-				log.Printf("Ata %d salva com %d parágrafos enriquecidos.", ata.NumeroReuniao, processedParagraphs)
-				enrichedMap[ata.NumeroReuniao] = true
+				log.Printf("Ata %d salva com %d novos parágrafos enriquecidos.", ata.NumeroReuniao, newlyEnrichedCount)
 				count++
 			}
 		} else {
-			log.Printf("Ata %d não gerou parágrafos válidos.", ata.NumeroReuniao)
+			log.Printf("Ata %d: nenhum novo parágrafo para enriquecer.", ata.NumeroReuniao)
 		}
 	}
 	log.Println("Enrichment finalizado.")

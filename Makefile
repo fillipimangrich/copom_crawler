@@ -9,8 +9,11 @@ run:
 run-scrape:
 	go run . -mode=scrape
 
+# Defina sua chave aqui ou passe via linha de comando: make run-enrich GEMINI_API_KEY=sua_chave
+GEMINI_API_KEY ?= ""
+
 run-enrich:
-	go run . -mode=enrich
+	GEMINI_API_KEY=$(GEMINI_API_KEY) go run . -mode=enrich
 
 build:
 	go build -o $(BINARY_NAME) .
