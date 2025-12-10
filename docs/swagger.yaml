@@ -1,0 +1,229 @@
+basePath: /
+definitions:
+  main.CopomAta:
+    properties:
+      conteudo:
+        type: string
+      data_reuniao:
+        description: Formato YYYY-MM-DD
+        type: string
+      falha_no_parse:
+        type: boolean
+      numero_reuniao:
+        type: integer
+      titulo:
+        type: string
+      url:
+        type: string
+      valor_dolar:
+        description: Dólar PTAX na data
+        type: number
+      valor_ipca:
+        description: IPCA do mês da reunião
+        type: number
+    type: object
+  main.EnrichedParagraph:
+    properties:
+      dollar_value:
+        type: number
+      global_id:
+        type: integer
+      ipca_value:
+        type: number
+      meeting_date:
+        type: string
+      meeting_number:
+        type: integer
+      paragraph:
+        type: string
+      paragraph_id:
+        description: Sequencial dentro da reunião
+        type: integer
+      prediction:
+        $ref: '#/definitions/main.GeminiPrediction'
+    type: object
+  main.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  main.GeminiPrediction:
+    properties:
+      dollar_trend:
+        description: '"SUBIR", "DESCER", "NEUTRO"'
+        type: string
+      ipca_trend:
+        description: '"SUBIR", "DESCER", "NEUTRO"'
+        type: string
+      reasoning:
+        type: string
+    type: object
+  main.PaginatedResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/main.EnrichedParagraph'
+        type: array
+      limit:
+        type: integer
+      page:
+        type: integer
+      total:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: API para acesso às atas do COPOM e dados enriquecidos com análise de
+    sentimento via Gemini AI
+  title: COPOM Crawler API
+  version: "1.0"
+paths:
+  /atas:
+    get:
+      description: Retorna metadados de todas as atas (sem o conteúdo completo)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/main.CopomAta'
+            type: array
+      summary: Lista todas as atas do COPOM
+      tags:
+      - Atas
+  /atas/{numero}:
+    get:
+      description: Retorna uma ata específica com conteúdo completo
+      parameters:
+      - description: Número da reunião
+        in: path
+        name: numero
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.CopomAta'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/main.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/main.ErrorResponse'
+      summary: Busca ata por número da reunião
+      tags:
+      - Atas
+  /atas/numeros:
+    get:
+      description: Retorna array com os números de todas as reuniões (ordenado decrescente)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: integer
+            type: array
+      summary: Lista números das reuniões disponíveis
+      tags:
+      - Atas
+  /enriched:
+    get:
+      description: Retorna parágrafos com análise de sentimento do Gemini AI
+      parameters:
+      - default: 1
+        description: Número da página
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Itens por página (máx 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Filtrar por número da reunião
+        in: query
+        name: meeting
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.PaginatedResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/main.ErrorResponse'
+      summary: Lista parágrafos enriquecidos (paginado)
+      tags:
+      - Enriched
+  /enriched/{id}:
+    get:
+      description: Retorna um parágrafo enriquecido específico
+      parameters:
+      - description: Global ID do parágrafo
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.EnrichedParagraph'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/main.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/main.ErrorResponse'
+      summary: Busca parágrafo por ID global
+      tags:
+      - Enriched
+  /enriched/meeting/{numero}:
+    get:
+      description: Retorna todos os parágrafos enriquecidos de uma reunião do COPOM
+      parameters:
+      - description: Número da reunião
+        in: path
+        name: numero
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/main.EnrichedParagraph'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/main.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/main.ErrorResponse'
+      summary: Lista parágrafos de uma reunião específica
+      tags:
+      - Enriched
+swagger: "2.0"

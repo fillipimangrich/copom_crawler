@@ -1,33 +1,26 @@
+// @title COPOM Crawler API
+// @version 1.0
+// @description API para acesso às atas do COPOM e dados enriquecidos com análise de sentimento via Gemini AI
+// @host localhost:8080
+// @BasePath /
+
 package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	_ "github.com/seu-usuario/copom-crawler/docs"
+
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
-
-func getAtaNumbers(c *gin.Context, store *ataStore) {
-	store.mu.RLock()
-	defer store.mu.RUnlock()
-
-	numeros := make([]int, 0, len(store.atasPorNumero))
-	for k := range store.atasPorNumero {
-		numeros = append(numeros, k)
-	}
-
-	sort.Sort(sort.Reverse(sort.IntSlice(numeros)))
-
-	c.JSON(http.StatusOK, numeros)
-}
 
 func main() {
 	modePtr := flag.String("mode", "serve", "Modo de operação: 'scrape', 'enrich', 'serve' ou 'all'")
@@ -298,10 +291,8 @@ func runEnricher() {
 
 func runServer() {
 	log.Println("=== MODO SERVER ===")
-	// Carregar dados para servir
-	// A API original servia 'store.atas' (CopomAta).
-	// Vamos carregar dataset_raw.json para manter compatibilidade.
 
+	// Carregar dados das atas
 	store := newAtaStore()
 	atas, err := LoadAtas("dataset_raw.json")
 	if err != nil {
@@ -316,49 +307,40 @@ func runServer() {
 		}
 	}
 	store.mu.Unlock()
-
 	log.Printf("Servindo %d atas.", len(store.atas))
 
+	// Carregar dados enriquecidos
+	enriched := newEnrichedStore()
+	enrichedData, err := LoadEnrichedData("dataset_enriched.json")
+	if err != nil {
+		log.Printf("AVISO: Não foi possível carregar dataset_enriched.json: %v", err)
+	}
+
+	enriched.mu.Lock()
+	enriched.paragraphs = enrichedData
+	for _, p := range enrichedData {
+		enriched.byGlobalID[p.GlobalID] = p
+		enriched.byMeetingNumber[p.MeetingNumber] = append(enriched.byMeetingNumber[p.MeetingNumber], p)
+	}
+	enriched.mu.Unlock()
+	log.Printf("Servindo %d parágrafos enriquecidos.", len(enriched.paragraphs))
+
+	// Configurar router
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 
-	router.GET("/atas", func(c *gin.Context) {
-		store.mu.RLock()
-		defer store.mu.RUnlock()
-		var atasSemConteudo []CopomAta
-		for _, ata := range store.atas {
-			atasSemConteudo = append(atasSemConteudo, CopomAta{
-				NumeroReuniao: ata.NumeroReuniao,
-				URL:           ata.URL,
-				Titulo:        ata.Titulo,
-				DataReuniao:   ata.DataReuniao,
-				ValorDolar:    ata.ValorDolar,
-				ValorIPCA:     ata.ValorIPCA,
-			})
-		}
-		c.JSON(http.StatusOK, atasSemConteudo)
-	})
+	// Swagger UI
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	router.GET("/atas/:numero", func(c *gin.Context) {
-		numStr := c.Param("numero")
-		num, err := strconv.Atoi(numStr)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Número da reunião inválido."})
-			return
-		}
-		store.mu.RLock()
-		defer store.mu.RUnlock()
-		ata, found := store.atasPorNumero[num]
-		if !found {
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Ata número %d não encontrada.", num)})
-			return
-		}
-		c.JSON(http.StatusOK, ata)
-	})
+	// Endpoints de Atas
+	router.GET("/atas", ListAtas(store))
+	router.GET("/atas/numeros", ListAtaNumeros(store))
+	router.GET("/atas/:numero", GetAtaByNumero(store))
 
-	router.GET("/atas/numeros", func(c *gin.Context) {
-		getAtaNumbers(c, store)
-	})
+	// Endpoints de dados enriquecidos
+	router.GET("/enriched", ListEnriched(enriched))
+	router.GET("/enriched/:id", GetEnrichedByID(enriched))
+	router.GET("/enriched/meeting/:numero", GetEnrichedByMeeting(enriched))
 
 	log.Println("Servidor de API iniciado em http://localhost:8080")
 	router.Run(":8080")

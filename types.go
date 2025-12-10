@@ -42,3 +42,18 @@ func newAtaStore() *ataStore {
 		atasPorNumero: make(map[int]CopomAta),
 	}
 }
+
+type enrichedStore struct {
+	mu              sync.RWMutex
+	paragraphs      []EnrichedParagraph
+	byGlobalID      map[int]EnrichedParagraph
+	byMeetingNumber map[int][]EnrichedParagraph
+}
+
+func newEnrichedStore() *enrichedStore {
+	return &enrichedStore{
+		paragraphs:      make([]EnrichedParagraph, 0),
+		byGlobalID:      make(map[int]EnrichedParagraph),
+		byMeetingNumber: make(map[int][]EnrichedParagraph),
+	}
+}
