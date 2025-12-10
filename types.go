@@ -10,6 +10,7 @@ type CopomAta struct {
 	ValorDolar    float64 `json:"valor_dolar,omitempty"`  // Dólar PTAX na data
 	ValorIPCA     float64 `json:"valor_ipca,omitempty"`   // IPCA do mês da reunião
 	Conteudo      string  `json:"conteudo,omitempty"`
+	FalhaNoParse  bool    `json:"falha_no_parse,omitempty"`
 }
 
 type GeminiPrediction struct {

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,7 +61,7 @@ func runScraper() {
 
 	existingMap := make(map[int]bool)
 	for _, ata := range existingAtas {
-		if ata.NumeroReuniao != 0 {
+		if ata.NumeroReuniao != 0 && !ata.FalhaNoParse {
 			existingMap[ata.NumeroReuniao] = true
 		}
 	}
@@ -68,8 +69,18 @@ func runScraper() {
 
 	// Callback para salvar a cada nova ata
 	onSave := func(newAta CopomAta) error {
-		// Adicionar à lista em memória
-		existingAtas = append(existingAtas, newAta)
+		// Adicionar ou atualizar na lista em memória
+		found := false
+		for i, ata := range existingAtas {
+			if ata.NumeroReuniao == newAta.NumeroReuniao {
+				existingAtas[i] = newAta
+				found = true
+				break
+			}
+		}
+		if !found {
+			existingAtas = append(existingAtas, newAta)
+		}
 		// Salvar tudo no disco
 		// (Ineficiente para grandes volumes, mas seguro e simples para <100MB)
 		return SaveAtas(filename, existingAtas)
@@ -130,12 +141,51 @@ func runEnricher() {
 
 		log.Printf("Enriquecendo Ata %d...", ata.NumeroReuniao)
 
-		// Quebrar em parágrafos
-		paragraphs := strings.Split(ata.Conteudo, "\n")
+		var textContent string
+		if ata.FalhaNoParse {
+			// Remover tags HTML simples para extrair texto
+			// Regex simples para remover tags
+			re := regexp.MustCompile(`<[^>]*>`)
+			textContent = re.ReplaceAllString(ata.Conteudo, "\n")
+			// Decodificar entidades HTML básicas se necessário (simplificado aqui)
+			textContent = strings.ReplaceAll(textContent, "&nbsp;", " ")
+			textContent = strings.ReplaceAll(textContent, "&amp;", "&")
+		} else {
+			textContent = ata.Conteudo
+		}
+
+		// Quebrar em linhas e agregar parágrafos
+		rawLines := strings.Split(textContent, "\n")
+		var paragraphs []string
+		var currentBuffer strings.Builder
+
+		for _, line := range rawLines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+
+			// Se o buffer não estiver vazio, adicionar espaço antes da nova linha
+			if currentBuffer.Len() > 0 {
+				currentBuffer.WriteString(" ")
+			}
+			currentBuffer.WriteString(line)
+
+			// Se o parágrafo acumulado for grande o suficiente, considerar um parágrafo
+			// Aumentei para 200 chars para evitar frases soltas, mas pode ajustar
+			if currentBuffer.Len() >= 200 {
+				paragraphs = append(paragraphs, currentBuffer.String())
+				currentBuffer.Reset()
+			}
+		}
+		// Adicionar o restante do buffer se houver algo
+		if currentBuffer.Len() > 0 {
+			paragraphs = append(paragraphs, currentBuffer.String())
+		}
 
 		processedParagraphs := 0
 		for _, p := range paragraphs {
-			p = strings.TrimSpace(p)
+			// Verificação extra de tamanho mínimo (embora a agregação já ajude)
 			if len(p) < 50 {
 				continue
 			}

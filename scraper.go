@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -40,84 +39,9 @@ func getDolarPorScraping(wd selenium.WebDriver, dataYMD string) (float64, error)
 	}
 	log.Println("[Scraping Dólar] 1. Navegação concluída.")
 
-	log.Println("[Scraping Dólar] 2. Aguardando 2s para banner de cookies...")
-	time.Sleep(2 * time.Second)
-	log.Println("[Scraping Dólar] 2. Tentando clicar no banner de cookies...")
-	tryToClick(wd, selenium.ByID, "onetrust-accept-btn-handler")
-	log.Println("[Scraping Dólar] 2. Tentativa de clique no banner concluída.")
-
-	log.Println("[Scraping Dólar] 3. Tentando clicar no pop-up de login...")
-	tryToClick(wd, selenium.ByClassName, "popupCloseIcon")
-	log.Println("[Scraping Dólar] 3. Tentativa de clique no pop-up concluída.")
-
-	waitTimeout := 20 * time.Second
-
-	log.Println("[Scraping Dólar] 4. Aguardando o seletor de data estar clicável...")
-
-	datePickerXPath := "//div[contains(text(), ' - ')]/parent::div[contains(@class, 'rounded')]"
-	if err := wd.WaitWithTimeout(func(wd selenium.WebDriver) (bool, error) {
-		el, err := wd.FindElement(selenium.ByXPATH, datePickerXPath)
-		if err != nil {
-			return false, nil
-		}
-		displayed, err := el.IsDisplayed()
-		if err != nil || !displayed {
-			return false, nil
-		}
-		enabled, err := el.IsEnabled()
-		if err != nil || !enabled {
-			return false, nil
-		}
-		return true, nil
-	}, waitTimeout); err != nil {
-		return 0, fmt.Errorf("botão de data (%s) não ficou clicável: %v", datePickerXPath, err)
-	}
-	log.Println("[Scraping Dólar] 4. Seletor de data está clicável.")
-	datePickerButton, err := wd.FindElement(selenium.ByXPATH, datePickerXPath)
-	if err != nil {
-		return 0, fmt.Errorf("não foi possível encontrar o botão de data %s: %v", datePickerXPath, err)
-	}
-
-	log.Println("[Scraping Dólar] 5. Clicando no botão de data (via JavaScript)...")
-
-	if _, err := wd.ExecuteScript("arguments[0].click();", []interface{}{datePickerButton}); err != nil {
-		return 0, fmt.Errorf("falha ao clicar no botão de data via JS: %v", err)
-	}
-	log.Println("[Scraping Dólar] 5. Clique no botão de data concluído.")
-	time.Sleep(1 * time.Second)
-
-	log.Println("[Scraping Dólar] 6. Aguardando o pop-up de data abrir...")
-
-	startDateXPath := "//div[contains(@class, 'NativeDateInputV2_root')][1]//input"
-	if err := wd.WaitWithTimeout(func(wd selenium.WebDriver) (bool, error) {
-		el, err := wd.FindElement(selenium.ByXPATH, startDateXPath)
-		if err != nil {
-			return false, nil
-		}
-		return el != nil, nil
-	}, waitTimeout); err != nil {
-
-		screenshot, ssErr := wd.Screenshot()
-		if ssErr == nil {
-			filename := fmt.Sprintf("debug_screenshot_%s.png", time.Now().Format("150405"))
-			os.WriteFile(filename, screenshot, 0644)
-			log.Printf("[Scraping Dólar] DEBUG: Screenshot salvo em %s", filename)
-		} else {
-			log.Printf("[Scraping Dólar] DEBUG: Falha ao tirar screenshot: %v", ssErr)
-		}
-
-		pageSource, psErr := wd.PageSource()
-		if psErr == nil {
-			filename := fmt.Sprintf("debug_page_source_%s.html", time.Now().Format("150405"))
-			os.WriteFile(filename, []byte(pageSource), 0644)
-			log.Printf("[Scraping Dólar] DEBUG: HTML da página salvo em %s", filename)
-		} else {
-			log.Printf("[Scraping Dólar] DEBUG: Falha ao salvar HTML da página: %v", psErr)
-		}
-
-		return 0, fmt.Errorf("input de data (startDateXPath) não apareceu: %v", err)
-	}
-	log.Println("[Scraping Dólar] 6. Pop-up de data aberto (input de data encontrado).")
+	// Estratégia Otimizada: Usar fetch() via JavaScript diretamente após carregar a página
+	// Isso evita a interação com banners, popups e o DatePicker, usando a sessão do navegador
+	log.Println("[Scraping Dólar] 2. Buscando dados via API interna (fetch)...")
 
 	// Estratégia Híbrida: Usar fetch() via JavaScript para buscar dados da API interna
 	// Isso evita a interação com o DatePicker e usa a sessão do navegador para passar pelo Cloudflare
@@ -320,17 +244,6 @@ func getIPCAPorScraping(wd selenium.WebDriver) (map[string]float64, error) {
 	return ipcaMap, nil
 }
 
-func tryToClick(wd selenium.WebDriver, by, selector string) {
-	el, err := wd.FindElement(by, selector)
-	if err == nil {
-		el.Click()
-		log.Printf("Popup/Banner (%s) clicado com sucesso.", selector)
-		time.Sleep(500 * time.Millisecond) // Espera a ação
-	} else {
-		log.Printf("Popup/Banner (%s) não encontrado. Continuando...", selector)
-	}
-}
-
 func scrapeCopomAtas(existingMeetings map[int]bool, onSave func(CopomAta) error) error {
 	service, err := selenium.NewChromeDriverService("./chromedriver-linux64/chromedriver", seleniumPort)
 	if err != nil {
@@ -373,7 +286,7 @@ func scrapeCopomAtas(existingMeetings map[int]bool, onSave func(CopomAta) error)
 	}
 
 	log.Println("Aguardando o conteúdo dinâmico carregar (lista de atas)...")
-	waitTimeout := 15 * time.Second
+	waitTimeout := 3 * time.Second
 	firstLinkSelector := "//div[contains(@class, 'resultados-relacionados')]//h4/a"
 
 	err = wd.WaitWithTimeout(func(wd selenium.WebDriver) (bool, error) {
@@ -421,6 +334,12 @@ func scrapeCopomAtas(existingMeetings map[int]bool, onSave func(CopomAta) error)
 			continue
 		}
 
+		// Pular atas em PDF (200 a 231)
+		if num >= 200 && num <= 231 {
+			log.Printf("Ata %d ignorada (PDF). Pulando...", num)
+			continue
+		}
+
 		log.Printf("-----------------------------------------------------")
 		log.Printf("Processando Ata URL: %s (Texto: %s)", link.URL, link.Text)
 
@@ -429,12 +348,40 @@ func scrapeCopomAtas(existingMeetings map[int]bool, onSave func(CopomAta) error)
 			continue
 		}
 
+		// Esperar pelo conteúdo (atacompleta OU Sumário para atas antigas)
 		err = wd.WaitWithTimeout(func(wd selenium.WebDriver) (bool, error) {
-			_, err := wd.FindElement(selenium.ByID, "atacompleta")
-			return err == nil, nil
+			// Tentar encontrar o padrão novo
+			_, err1 := wd.FindElement(selenium.ByID, "atacompleta")
+			if err1 == nil {
+				return true, nil
+			}
+			// Tentar encontrar o padrão antigo (Sumário) com b, strong ou a
+			_, err2 := wd.FindElement(selenium.ByXPATH, "//div[div//*[self::b or self::strong or self::a][contains(text(), 'Sumário') or contains(text(), 'Sumario')]]")
+			return err2 == nil, nil
 		}, waitTimeout)
+
 		if err != nil {
-			log.Printf("AVISO: Conteúdo da ata não carregou em %s. Pulando...", link.URL)
+			log.Printf("AVISO: Timeout ao carregar conteúdo da ata %s. Salvando HTML completo...", link.URL)
+			html, errHTML := wd.PageSource()
+			if errHTML != nil {
+				log.Printf("ERRO: Falha ao obter HTML da página %s após timeout: %v. Pulando...", link.URL, errHTML)
+				continue
+			}
+
+			// Criar ata com o HTML completo e flag de falha
+			ata := CopomAta{
+				URL:           link.URL,
+				Titulo:        strings.TrimSpace(link.Text), // Usar texto do link pois h3 pode não ter carregado
+				Conteudo:      html,
+				NumeroReuniao: num,
+				FalhaNoParse:  true,
+			}
+
+			if err := onSave(ata); err != nil {
+				log.Printf("ERRO ao salvar ata %d (timeout): %v", num, err)
+			} else {
+				log.Printf("Ata %d salva com sucesso (HTML completo após timeout).", num)
+			}
 			continue
 		}
 
@@ -445,14 +392,34 @@ func scrapeCopomAtas(existingMeetings map[int]bool, onSave func(CopomAta) error)
 		}
 		titulo, _ := titleElement.Text()
 
-		contentElement, _ := wd.FindElement(selenium.ByID, "atacompleta")
-		conteudo, _ := contentElement.Text()
+		var conteudo string
+		var falhaNoParse bool
+		contentElement, err := wd.FindElement(selenium.ByID, "atacompleta")
+		if err == nil {
+			conteudo, _ = contentElement.Text()
+		} else {
+			// Fallback para atas antigas (b, strong ou a)
+			contentElement, err = wd.FindElement(selenium.ByXPATH, "//div[div//*[self::b or self::strong or self::a][contains(text(), 'Sumário') or contains(text(), 'Sumario')]]")
+			if err == nil {
+				conteudo, _ = contentElement.Text()
+			} else {
+				log.Printf("AVISO: Não foi possível extrair o conteúdo estruturado da ata %s. Salvando HTML completo.", link.URL)
+				html, errHTML := wd.PageSource()
+				if errHTML == nil {
+					conteudo = html
+					falhaNoParse = true
+				} else {
+					log.Printf("ERRO: Falha ao obter HTML da página %s: %v", link.URL, errHTML)
+				}
+			}
+		}
 
 		ata := CopomAta{
 			URL:           link.URL,
 			Titulo:        strings.TrimSpace(titulo),
 			Conteudo:      conteudo,
 			NumeroReuniao: extractMeetingNumber(titulo),
+			FalhaNoParse:  falhaNoParse,
 		}
 
 		// Se não conseguimos extrair do link, usamos o do título.
