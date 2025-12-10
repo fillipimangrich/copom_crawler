@@ -16,6 +16,105 @@ const copomListURL = "https://www.bcb.gov.br/publicacoes/atascopom/cronologicos"
 const investingURL = "https://br.investing.com/currencies/usd-brl-historical-data"
 const seleniumPort = 9515
 
+func getIPCAPorScraping(wd selenium.WebDriver) (map[string]float64, error) {
+	log.Println("[Scraping IPCA] Iniciando extração do IPCA do IBGE...")
+	url := "https://www.ibge.gov.br/estatisticas/economicas/precos-e-custos/9256-indice-nacional-de-precos-ao-consumidor-amplo.html?=&t=series-historicas"
+
+	if err := wd.Get(url); err != nil {
+		return nil, fmt.Errorf("falha ao abrir URL do IBGE: %v", err)
+	}
+
+	// Esperar o gráfico carregar (Highcharts)
+	timeout := 20 * time.Second
+	err := wd.WaitWithTimeout(func(wd selenium.WebDriver) (bool, error) {
+		res, err := wd.ExecuteScript("return (window.Highcharts && window.Highcharts.charts && window.Highcharts.charts[0]) ? true : false", nil)
+		if err != nil {
+			return false, nil
+		}
+		return res.(bool), nil
+	}, timeout)
+
+	if err != nil {
+		return nil, fmt.Errorf("timeout aguardando Highcharts carregar: %v", err)
+	}
+
+	// Extrair categorias (datas) e dados (valores)
+	// Script para retornar um objeto com ambos
+	script := `
+		var chart = window.Highcharts.charts[0];
+		var categories = chart.xAxis[0].categories;
+		var data = chart.series[0].options.data;
+		return {categories: categories, data: data};
+	`
+
+	res, err := wd.ExecuteScript(script, nil)
+	if err != nil {
+		return nil, fmt.Errorf("erro ao executar JS para extrair dados: %v", err)
+	}
+
+	resultMap, ok := res.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("formato de retorno do JS inválido")
+	}
+
+	catsInterface, ok1 := resultMap["categories"].([]interface{})
+	dataInterface, ok2 := resultMap["data"].([]interface{})
+
+	if !ok1 || !ok2 {
+		// Tentar fallback se data for objetos {name: "Jan 2023", y: 0.5}
+		// Mas assumindo que categories existe baseado na investigação
+		return nil, fmt.Errorf("não foi possível converter categories ou data para array")
+	}
+
+	if len(catsInterface) != len(dataInterface) {
+		return nil, fmt.Errorf("tamanho de categorias (%d) e dados (%d) não batem", len(catsInterface), len(dataInterface))
+	}
+
+	ipcaMap := make(map[string]float64)
+
+	for i, catVal := range catsInterface {
+		dateStr, ok := catVal.(string) // Ex: "janeiro 1980"
+		if !ok {
+			continue
+		}
+
+		valVal := dataInterface[i]
+		var valFloat float64
+
+		// Selenium pode retornar int ou float dependendo do valor
+		switch v := valVal.(type) {
+		case float64:
+			valFloat = v
+		case int64:
+			valFloat = float64(v)
+		case int:
+			valFloat = float64(v)
+		default:
+			// Tentar string parse se necessário, mas Highcharts data costuma ser numérico
+			continue
+		}
+
+		// Parse da data "janeiro 1980" -> "1980-01"
+		parts := strings.Split(dateStr, " ")
+		if len(parts) != 2 {
+			continue
+		}
+		mesNome := strings.ToLower(parts[0])
+		ano := parts[1]
+
+		mesNum, ok := monthMap[mesNome]
+		if !ok {
+			continue
+		}
+
+		key := fmt.Sprintf("%s-%s", ano, mesNum)
+		ipcaMap[key] = valFloat
+	}
+
+	log.Printf("[Scraping IPCA] Extraídos %d registros de IPCA.", len(ipcaMap))
+	return ipcaMap, nil
+}
+
 func getDolarPorScraping(wd selenium.WebDriver, dataYMD string) (float64, error) {
 	log.Printf("Iniciando scraping do Dólar para a data: %s", dataYMD)
 
@@ -143,105 +242,6 @@ func getDolarPorScraping(wd selenium.WebDriver, dataYMD string) (float64, error)
 
 	log.Printf("[Scraping Dólar] Preço extraído: %.4f", price)
 	return price, nil
-}
-
-func getIPCAPorScraping(wd selenium.WebDriver) (map[string]float64, error) {
-	log.Println("[Scraping IPCA] Iniciando extração do IPCA do IBGE...")
-	url := "https://www.ibge.gov.br/estatisticas/economicas/precos-e-custos/9256-indice-nacional-de-precos-ao-consumidor-amplo.html?=&t=series-historicas"
-
-	if err := wd.Get(url); err != nil {
-		return nil, fmt.Errorf("falha ao abrir URL do IBGE: %v", err)
-	}
-
-	// Esperar o gráfico carregar (Highcharts)
-	timeout := 20 * time.Second
-	err := wd.WaitWithTimeout(func(wd selenium.WebDriver) (bool, error) {
-		res, err := wd.ExecuteScript("return (window.Highcharts && window.Highcharts.charts && window.Highcharts.charts[0]) ? true : false", nil)
-		if err != nil {
-			return false, nil
-		}
-		return res.(bool), nil
-	}, timeout)
-
-	if err != nil {
-		return nil, fmt.Errorf("timeout aguardando Highcharts carregar: %v", err)
-	}
-
-	// Extrair categorias (datas) e dados (valores)
-	// Script para retornar um objeto com ambos
-	script := `
-		var chart = window.Highcharts.charts[0];
-		var categories = chart.xAxis[0].categories;
-		var data = chart.series[0].options.data;
-		return {categories: categories, data: data};
-	`
-
-	res, err := wd.ExecuteScript(script, nil)
-	if err != nil {
-		return nil, fmt.Errorf("erro ao executar JS para extrair dados: %v", err)
-	}
-
-	resultMap, ok := res.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("formato de retorno do JS inválido")
-	}
-
-	catsInterface, ok1 := resultMap["categories"].([]interface{})
-	dataInterface, ok2 := resultMap["data"].([]interface{})
-
-	if !ok1 || !ok2 {
-		// Tentar fallback se data for objetos {name: "Jan 2023", y: 0.5}
-		// Mas assumindo que categories existe baseado na investigação
-		return nil, fmt.Errorf("não foi possível converter categories ou data para array")
-	}
-
-	if len(catsInterface) != len(dataInterface) {
-		return nil, fmt.Errorf("tamanho de categorias (%d) e dados (%d) não batem", len(catsInterface), len(dataInterface))
-	}
-
-	ipcaMap := make(map[string]float64)
-
-	for i, catVal := range catsInterface {
-		dateStr, ok := catVal.(string) // Ex: "janeiro 1980"
-		if !ok {
-			continue
-		}
-
-		valVal := dataInterface[i]
-		var valFloat float64
-
-		// Selenium pode retornar int ou float dependendo do valor
-		switch v := valVal.(type) {
-		case float64:
-			valFloat = v
-		case int64:
-			valFloat = float64(v)
-		case int:
-			valFloat = float64(v)
-		default:
-			// Tentar string parse se necessário, mas Highcharts data costuma ser numérico
-			continue
-		}
-
-		// Parse da data "janeiro 1980" -> "1980-01"
-		parts := strings.Split(dateStr, " ")
-		if len(parts) != 2 {
-			continue
-		}
-		mesNome := strings.ToLower(parts[0])
-		ano := parts[1]
-
-		mesNum, ok := monthMap[mesNome]
-		if !ok {
-			continue
-		}
-
-		key := fmt.Sprintf("%s-%s", ano, mesNum)
-		ipcaMap[key] = valFloat
-	}
-
-	log.Printf("[Scraping IPCA] Extraídos %d registros de IPCA.", len(ipcaMap))
-	return ipcaMap, nil
 }
 
 func scrapeCopomAtas(existingMeetings map[int]bool, onSave func(CopomAta) error) error {
