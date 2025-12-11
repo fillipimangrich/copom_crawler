@@ -115,7 +115,13 @@ func runEnricher() {
 		}
 	}
 
-	// Segundo passo: preencher zeros
+	// Criar mapa de URLs das atas brutas para backfill
+	meetingURLMap := make(map[int]string)
+	for _, ata := range rawAtas {
+		meetingURLMap[ata.NumeroReuniao] = ata.URL
+	}
+
+	// Segundo passo: preencher zeros e URLs faltantes
 	for i := range enrichedData {
 		if enrichedData[i].GlobalID == 0 {
 			maxGlobalID++
@@ -126,6 +132,12 @@ func runEnricher() {
 			paraCount[enrichedData[i].MeetingNumber]++
 			enrichedData[i].ParagraphID = paraCount[enrichedData[i].MeetingNumber]
 			needsSave = true
+		}
+		if enrichedData[i].URL == "" {
+			if url, ok := meetingURLMap[enrichedData[i].MeetingNumber]; ok {
+				enrichedData[i].URL = url
+				needsSave = true
+			}
 		}
 	}
 
@@ -259,6 +271,7 @@ func runEnricher() {
 				GlobalID:      nextGlobalID,
 				ParagraphID:   paragraphID,
 				MeetingNumber: ata.NumeroReuniao,
+				URL:           ata.URL,
 				MeetingDate:   ata.DataReuniao,
 				DollarValue:   ata.ValorDolar,
 				IPCAValue:     ata.ValorIPCA,

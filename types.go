@@ -23,6 +23,7 @@ type EnrichedParagraph struct {
 	GlobalID      int              `json:"global_id"`
 	ParagraphID   int              `json:"paragraph_id"` // Sequencial dentro da reunião
 	MeetingNumber int              `json:"meeting_number"`
+	URL           string           `json:"url"`
 	MeetingDate   string           `json:"meeting_date"`
 	DollarValue   float64          `json:"dollar_value"`
 	IPCAValue     float64          `json:"ipca_value"`
